@@ -9,7 +9,7 @@ import jsYaml from "js-yaml"
 import * as path from "path"
 
 import * as umlGeneratorLib from "./umlGenerator"
-import { getErrorsFromModelValidation } from "./util/getErrorsFromModelValidation"
+//import { getErrorsFromModelValidation } from "./util/getErrorsFromModelValidation"
 import * as jsonUtils from "./util/jsonUtils"
 import { log } from "./util/logging"
 import { ModelValidationError } from "./util/modelValidationError"
@@ -203,13 +203,14 @@ export async function validateExamples(
     try {
       await validator.initialize()
       log.info(`Validating "examples" and "x-ms-examples" in  ${specPath}:\n`)
-      await validator.validateOperations(operationIds)
-      updateEndResultOfSingleValidation(validator)
+      await validator.validateOperations2(specPath, operationIds)
+      /*updateEndResultOfSingleValidation(validator)
       logDetailedInfo(validator)
       const errors = getErrorsFromModelValidation(validator.specValidationResult)
       if (o.pretty) {
-        if (errors.length > 0) {
+        if (errors.length > 0) {*/
           /* tslint:disable-next-line:no-console no-string-literal */
+          /*
           console.log(
             vsoLogIssueWrapper(
               "error",
@@ -219,11 +220,12 @@ export async function validateExamples(
           prettyPrint(errors, "error")
         }
       }
-      return errors
+      return errors*/
+      return [{ inner: undefined}]
     } catch (e) {
       log.error(e)
-      validator.specValidationResult.validityStatus = false
-      updateEndResultOfSingleValidation(validator)
+      //validator.specValidationResult.validityStatus = false
+      //updateEndResultOfSingleValidation(validator)
       return [{ inner: e }]
     }
   })

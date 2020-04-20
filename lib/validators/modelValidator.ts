@@ -19,6 +19,7 @@ import { MultipleScenarios, Scenario } from "../util/responseReducer"
 import { OperationResultType } from "../util/scenarioReducer"
 import * as utils from "../util/utils"
 import { getTitle } from "./specTransformer"
+import * as csvwriter from "csv-writer"
 import {
   ExampleResponse,
   RequestValidation,
@@ -32,6 +33,69 @@ const HttpRequest = msRest.WebResource
 
 export class ModelValidator extends SpecValidator<SpecValidationResult> {
   private exampleJsonMap = new Map<string, Sway.SwaggerObject>()
+
+  public async validateOperations2(specPath: string, operationIds?: string): Promise<void> {
+    if (!this.swaggerApi) {
+      throw new Error(
+        // tslint:disable-next-line: max-line-length
+        `Please call "specValidator.initialize()" before calling this method, so that swaggerApi is populated.`
+      )
+    }
+    const rpmatches = specPath.match("Microsoft.[a-zA-Z]*")
+    let rp = ""
+    if (rpmatches && rpmatches.length > 0) {
+      rp = rpmatches[0]
+    }
+    const apiversions = specPath.match("[0-9]{4}-[0-9]{2}-[0-9]{2}(-preview)?")
+    let apiversion = ""
+    if (apiversions && apiversions.length > 0) {
+      apiversion = apiversions[0]
+    }
+    log.info(`${rp}/${apiversion}`)
+    if (
+      operationIds !== null &&
+      operationIds !== undefined &&
+      typeof operationIds.valueOf() !== "string"
+    ) {
+      throw new Error(`operationIds parameter must be of type 'string'.`)
+    }
+
+    let operations = this.swaggerApi.getOperations()
+    if (operationIds) {
+      const operationIdsObj: sm.MutableStringMap<unknown> = {}
+      operationIds
+        .trim()
+        .split(",")
+        .forEach(item => (operationIdsObj[item.trim()] = 1))
+      const operationsToValidate = operations.filter(item =>
+        Boolean(operationIdsObj[item.operationId])
+      )
+      if (operationsToValidate.length) {
+        operations = operationsToValidate
+      }
+    }
+
+    for (const operation of operations) {
+      this.specValidationResult.operations[operation.operationId] = {
+        "x-ms-examples": {},
+        "example-in-spec": {}
+      }
+      await this.validateXmsExamples2(rp, apiversion, operation)
+      /*
+      const operationResult = this.specValidationResult.operations[operation.operationId]
+      if (operationResult === undefined) {
+        throw new Error("operationResult is undefined")
+      }
+      const example = operationResult[C.exampleInSpec]
+      if (example === undefined) {
+        throw new Error("example is undefined")
+      }
+      if (sm.isEmpty(sm.toStringMap(example))) {
+        delete operationResult[C.exampleInSpec]
+      }*/
+    }
+  }
+
   /*
    * Validates the given operationIds or all the operations in the spec.
    *
@@ -357,6 +421,59 @@ export class ModelValidator extends SpecValidator<SpecValidationResult> {
     }
   }
 
+  private async validateXmsExamples2(rp: string, version: string, operation: Sway.Operation): Promise<void> {
+    if (operation === null || operation === undefined || typeof operation !== "object") {
+      throw new Error("operation cannot be null or undefined and must be of type 'object'.")
+    }
+    const xmsExamples = operation[C.xmsExamples]
+    const resultScenarios: ValidationResultScenarios = {}
+    //const result: ValidationResult = {
+      //scenarios: resultScenarios
+    //}
+    //const exampleFileMap = new Map<string, string>()
+    if (xmsExamples) {
+      let exampleSequence = 0
+      for (const [scenario, xmsExampleFunc] of sm.entries<any>(xmsExamples)) {
+        const xmsExample = xmsExampleFunc()
+        resultScenarios[scenario] = {
+          requestValidation: await this.validateRequest2(exampleSequence, rp, version, operation, scenario, xmsExample.parameters)
+        }
+        exampleSequence++
+        //exampleFileMap.set(scenario, xmsExample.docPath)
+        //await this.loadExamplesForOperation(xmsExample.docPath)
+      }
+      //result.scenarios = resultScenarios
+    } else {
+      const writer = csvwriter.createObjectCsvWriter({
+          path: "./file.csv",
+          header: [
+              {id: 'rp', title: 'ResourceProvider'},
+              {id: 'apiVersion', title: 'ApiVersion'},
+              {id: 'operationId', title: 'OperationId'},
+              {id: 'operationCount', title: 'OperationCount'},
+              {id: 'exampleCount', title: 'ExampleCount'},
+              {id: 'scenario', title: 'Scenario'},
+              {id: 'expectedParameterCount', title: 'DefinedParameterCount'},
+              {id: 'actualParameterCount', title: 'DeclaredParameterCount'},
+          ],
+          append: true
+      });
+      const record = [{
+        rp: rp,
+        apiVersion: version,
+        operationId: operation.operationId,
+        operationCount: 1,
+        exampleCount: 0,
+        scenario: "",
+        expectedParameterCount: 0,
+        actualParameterCount: 0
+      }]
+      await writer.writeRecords(record)
+      log.info(`${rp}/${version}/${operation.operationId}/no example defined.`)
+    }
+    //this.constructOperationResult(operation, result, C.xmsExamples, exampleFileMap)
+  }
+
   /*
    * Validates the x-ms-examples object for an operation if specified in the swagger spec.
    *
@@ -650,6 +767,74 @@ export class ModelValidator extends SpecValidator<SpecValidationResult> {
       log.error(e as any)
       responseWithoutXmsExamples.forEach(statusCode => (result[statusCode] = { errors: [e] }))
     }
+    return result
+  }
+
+  private async validateRequest2(
+    exampleSequence: number,
+    resourceProvider: string,
+    apiVersion: string,
+    operation: Sway.Operation,
+    scenarioName: string,
+    exampleParameterValues: sm.StringMap<{}>
+  ): Promise<RequestValidation> {
+    if (operation === null || operation === undefined || typeof operation !== "object") {
+      throw new Error("operation cannot be null or undefined and must be of type 'object'.")
+    }
+
+    if (
+      exampleParameterValues === null ||
+      exampleParameterValues === undefined ||
+      typeof exampleParameterValues !== "object"
+    ) {
+      throw new Error(
+        `In operation "${operation.operationId}", exampleParameterValues cannot be null or ` +
+          `undefined and must be of type "object" (A dictionary of key-value pairs of ` +
+          `parameter-names and their values).`
+      )
+    }
+
+    const parameters = operation.getParameters()
+    const result: RequestValidation = {
+      request: null,
+      validationResult: { errors: [], warnings: [] }
+    }
+    let parameterDefinedCount = 0, exampleParameterCount = 0
+    for (const parameter of parameters) {
+      parameterDefinedCount++
+      let parameterValue = exampleParameterValues[parameter.name]
+      if (parameterValue) {
+        exampleParameterCount++
+      }
+    }
+    const writer = csvwriter.createObjectCsvWriter({
+        path: "./file.csv",
+        header: [
+            {id: 'rp', title: 'ResourceProvider'},
+            {id: 'apiVersion', title: 'ApiVersion'},
+            {id: 'operationId', title: 'OperationId'},
+            {id: 'operationCount', title: 'OperationCount'},
+            {id: 'exampleCount', title: 'ExampleCount'},
+            {id: 'scenario', title: 'Scenario'},
+            {id: 'expectedParameterCount', title: 'DefinedParameterCount'},
+            {id: 'actualParameterCount', title: 'DeclaredParameterCount'},
+        ],
+        append: true
+    });
+    const record = [{
+      rp: resourceProvider,
+      apiVersion: apiVersion,
+      operationId: operation.operationId,
+      operationCount: exampleSequence == 0? 1 : 0,
+      exampleCount: exampleSequence == 0? 1 : 0,
+      scenario: scenarioName,
+      expectedParameterCount: parameterDefinedCount,
+      actualParameterCount: exampleParameterCount
+    }]
+    await writer.writeRecords(record)
+    //log.info(record.toString())
+    log.info(`${resourceProvider}/${apiVersion}/${operation.operationId}/${parameterDefinedCount}/${exampleParameterCount}`)
+    //result.validationResult = utils.mergeObjects(validationResult, result.validationResult as any)
     return result
   }
 

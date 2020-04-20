@@ -41,7 +41,8 @@
     "yuml2svg": "^4.2.1",
     "z-schema": "^4.2.2",
     "handlebars": "^4.7.1",
-    "kind-of": "^6.0.3"
+    "kind-of": "^6.0.3",
+    "csv-writer": "1.6.0"
   },
   "devDependencies": {
     "@types/commonmark": "^0.27.3",
